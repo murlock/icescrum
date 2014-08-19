@@ -31,7 +31,16 @@ STORY_STATE = { 1: "suggested (sandbox)",
                 7: "done (sprint)" }
 
 class Trac2Icescrum(object):
+    """
+        Read Trac tickets and put them on Icescrum / take them / ...
+    """
+    hdr = { "Accept": "application/json" }
+
     def __init__(self, configfile=None):
+        """ read config when creating instance 
+            params: configfile = None 
+            If configfile is not provided, try to read config from ~/.local/trac2icescrum.ini
+        """
         if configfile is None:
             configfile = os.path.abspath( os.getenv("HOME") + "/.local/trac2icescrum.ini")
         self.config = self._readconfig(configfile)
@@ -39,6 +48,7 @@ class Trac2Icescrum(object):
         self._icescrum = dict(self.config.items('icescrum'))
 
     def _readconfig(self, configfile):
+        """ fill our config object, if not available, fill it with dummy parameters"""
         config = SafeConfigParser()
         if os.path.isfile(configfile):
             config.readfp(open(configfile, 'r'))
@@ -89,12 +99,14 @@ class Trac2Icescrum(object):
         return [title, descr]
 
     def getstories(self):
-        hdr = { "Accept": "application/json" }
+        """
+            retrieve all stories opened for project
+        """
         url = "%s/ws/p/%s/story" % (self._icescrum['url'], self._icescrum['project'])
-        ret = requests.get(url, headers=hdr, auth=(self._icescrum['user'], self._icescrum['password']))
+        ret = requests.get(url, headers=self.hdr, auth=(self._icescrum['user'], self._icescrum['password']))
         if ret.status_code == 503:
             raise Exception("Webservice is not enabled on Icescrum")
-        if ret.status_code<200 or ret.status_code>299:
+        if ret.status_code//100 != 2:
             raise Exception("Something has failed : %d - %s" % ret.content)
         data = json.loads(ret.content)
         return data
@@ -106,17 +118,11 @@ class Trac2Icescrum(object):
         """
         if color is None:
             color = self._icescrum['color']
-        hdr = { "Accept": "application/json" }
-        """
-        url = "%s/ws/p/%s/story" % (self._icescrum['url'], self._icescrum['project'])
-        ret = requests.get(url, headers=hdr, auth=(self._icescrum['user'], self._icescrum['password']))
-        data = json.loads(ret.content)
-        if ret.status_code == 503:
-            raise Exception("Webservice is not enabled on Icescrum")
-        """
+
         data = self.getstories()
         # check that story is in progress
         found = False
+        # add special stories
         open_story = ["recurrent", "urgent"]
         sprint_id = None
         for story in data:
@@ -134,6 +140,7 @@ class Trac2Icescrum(object):
         if found is False:
             print("Story not found")
             story_selected = None
+
         # no story selected or story not found, display stories in progress
         if story_selected is None:
             print("Opened stories :")
@@ -159,7 +166,7 @@ class Trac2Icescrum(object):
         else:
             task["task"]["type"] = _story # for recurent or urgent
 
-        ret = requests.post(url, headers=hdr,
+        ret = requests.post(url, headers=self.hdr,
             auth=(self._icescrum['user'],
             self._icescrum['password']),
             data=json.dumps(task))
@@ -171,6 +178,23 @@ class Trac2Icescrum(object):
             raise Exception("Fail to create task")
 
         print("Task created")
+        data = json.loads(ret.content)
+        print(json.dumps(data, indent=4))
+        return data['id']
+
+    def take_task(self, taskid):
+        """ take task """
+        url = "%s/ws/p/%s/task/%s/take" % (
+            self._icescrum['url'], self._icescrum['project'], taskid)
+        ret = requests.post(url, headers=self.hdr,
+            auth=(self._icescrum['user'],
+            self._icescrum['password']))
+        if ret.status_code != 200:
+            print(ret)
+            print(ret.status_code)
+            print(ret.content)
+            raise Exception("Fail to take task")
+        return True
 
 
 def main():
@@ -180,13 +204,17 @@ def main():
 
     parser = argparse.ArgumentParser(
         description='Take a ticket from Trac and push it to Icescrum')
-    parser.add_argument('--story',   default=None)
-    parser.add_argument('--color',   default=None)
-    parser.add_argument('ticket')
+    parser.add_argument('--story', default=None, help="Story to use, if none is specified, list all opened stories")
+    parser.add_argument('--color', default=None, help="Specify to use, override default one")
+    parser.add_argument('--take',  default=False, action='store_true', 
+        help="After creating ticket, take ticket")
+    parser.add_argument('ticket', help="ticket number on trac")
     opts = parser.parse_args()
 
     content = job.trac(opts.ticket)
-    job.icescrum(content=content, story_selected=opts.story, color=opts.color)
+    taskid = job.icescrum(content=content, story_selected=opts.story, color=opts.color)
+    if taskid is not None and opts.take:
+        job.take_task(taskid)
 
 
 if __name__ == "__main__":
