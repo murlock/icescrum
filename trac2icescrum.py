@@ -114,7 +114,6 @@ class Trac2Icescrum(object):
     def icescrum(self, content, story_selected, color=None):
         """
             create a task on icescrum
-
         """
         if color is None:
             color = self._icescrum['color']
@@ -179,7 +178,6 @@ class Trac2Icescrum(object):
 
         print("Task created")
         data = json.loads(ret.content)
-        print(json.dumps(data, indent=4))
         return data['id']
 
     def take_task(self, taskid):
